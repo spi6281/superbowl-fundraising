@@ -1042,7 +1042,7 @@ function AdminPage({ state, onAdminUpdate, isAdmin }) {
                       key={idx} 
                       className="border-2 border-black text-center font-semibold w-20 py-1"
                     >
-                      {draft.numbers.randomized ? d : `X${idx}`}
+                      {draft.numbers.randomized ? d : `NE_${String.fromCharCode(65 + idx)}`}
                     </th>
                   ))}
                 </tr>
@@ -1060,7 +1060,7 @@ function AdminPage({ state, onAdminUpdate, isAdmin }) {
                     ) : null}
 
                     <th className="border-2 border-black text-center font-semibold w-10">
-                      {draft.numbers.randomized ? draft.numbers.left[r] : `Y${r}`}
+                      {draft.numbers.randomized ? draft.numbers.left[r] : `SEA_${String.fromCharCode(65 + r)}`}
                     </th>
 
                     {range10.map((c) => (
