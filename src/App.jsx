@@ -5,8 +5,15 @@ import React, { useEffect, useMemo, useState } from "react";
 // ============================
 // I will update this section every time I change this file.
 // You can also copy it into a separate CHANGELOG.md if you prefer.
-const APP_VERSION = "0.15.0";
+const APP_VERSION = "0.16.0";
 const CHANGELOG = [
+  {
+    version: "0.16.0",
+    date: "2026-02-01",
+    changes: [
+      "Changed labels as they were confusing",
+    ],
+  },
   {
     version: "0.15.0",
     date: "2026-02-01",
@@ -627,7 +634,7 @@ function BoardPage({ state }) {
           <Card className="border-amber-200 bg-amber-50">
             <CardContent className="text-sm text-amber-900">
               <span className="font-semibold">Note:</span>{" "}
-              The numbers X0–X9 and Y0–Y9 are placeholders to make communication easy.
+              The labels NE_A-NE_J and SEA_A–SEA_J are placeholders to make communication easy.
               They will be replaced with numbers 0–9 randomized in order for both the rows
               and columns, either when the grid is full or 1 hour before the game if it’s not full.
             </CardContent>
@@ -667,7 +674,7 @@ function BoardPage({ state }) {
                       key={idx} 
                       className="border-2 border-black text-center font-semibold w-20 py-1"
                     >
-                      {state.numbers.randomized ? d : `X${idx}`}
+                      {state.numbers.randomized ? d : `NE_${String.fromCharCode(65 + idx)}`}
                     </th>
                   ))}
                 </tr>
@@ -687,7 +694,7 @@ function BoardPage({ state }) {
 
                     {/* Row digit */}
                     <th className="border-2 border-black text-center font-semibold w-10">
-                      {state.numbers.randomized ? state.numbers.left[r] : `Y${r}`}
+                      {state.numbers.randomized ? state.numbers.left[r] : `SEA_${String.fromCharCode(65 + r)}`}
                     </th>
 
                     {/* 10 squares */}
