@@ -1,251 +1,340 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+
+// ============================
+// VERSION + CHANGELOG
+// ============================
+// I will update this section every time I change this file.
+// You can also copy it into a separate CHANGELOG.md if you prefer.
+const APP_VERSION = "0.12.0";
+const CHANGELOG = [
+  {
+    version: "0.12.0",
+    date: "2026-02-01",
+    changes: [
+      "Added Total money raised section (filled squares × $5) with $500 goal progress on Intro and Board pages.",
+    ],
+  },
+  {
+    version: "0.11.3",
+    date: "2026-02-01",
+    changes: [
+      "Rules page now renders a structured doc-style layout (title, section headings, indented examples) matching the uploaded Word document.",
+      "Default rules converted to structured blocks while keeping backward compatibility with older Firestore docs.",
+    ],
+  },
+  {
+    version: "0.11.2",
+    date: "2026-02-01",
+    changes: [
+      "Updated Rules page content to the new Official Rules text (multiline, formatted).",
+      "Rules page now renders multiline rules text with preserved line breaks.",
+    ],
+  },
+  {
+    version: "0.11.1",
+    date: "2026-02-01",
+    changes: [
+      "Fix crash in Intro page when introBody is an array with heading objects (render it safely).",
+      "Intro now supports either a single string (with line breaks) or a structured array of paragraphs/headings.",
+    ],
+  },
+  {
+    version: "0.6.0",
+    date: "2026-02-01",
+    changes: [
+      "Admin edits now save only when clicking Save changes (draft + discard).",
+      "Firestore-safe grid storage using an object map (no nested arrays).",
+      "Fix: winner cell lookup uses grid map keys (r{row}c{col}).",
+    ],
+  },
+  {
+    version: "0.7.0",
+    date: "2026-02-01",
+    changes: [
+      "Change grid layout",
+    ],
+  },
+ {
+  version: "0.8.0",
+  date: "2026-02-01",
+  changes: [
+    "Manual winner reveal added: Q1/Half/Q3/Final highlights and winner names stay hidden until an admin reveals them (then clicks Save changes).",
+  ],
+ },
+ {
+  version: "0.9.0",
+  date: "2026-02-01",
+  changes: [
+    "Fixed Bug: Fix: Board page no longer crashes when winners are hidden; last-digit line now only renders after a quarter is revealed.",
+  ],
+ },
+
+ {
+  version: "0.10.0",
+  date: "2026-02-01",
+  changes: [
+    "Removed grid numbers until randomized",
+  ],
+ },
+ {
+  version: "0.11.0",
+  date: "2026-02-01",
+  changes: [
+    "Changed intro, header and rules",
+  ],
+ },
+
+];
+
 
 /**
- * Super Bowl Squares Fundraiser – Plain React + Tailwind (no shadcn/ui)
+ * Super Bowl Squares Fundraiser – Secure (Firebase Auth + Firestore)
  *
- * Public pages: Intro, Board, Rules
- * Admin page: edit square names + update score last-digits (Q1/Half/Q3/Final)
- * No donation tracking.
+ * ✅ Public: Intro / Board / Rules
+ * ✅ Admin tab is HIDDEN unless signed-in user email is allow-listed
+ * ✅ Live sync for everyone via Firestore
+ * ✅ Real security must be enforced via Firestore Rules (admin-only writes)
  *
- * Storage: localStorage + Export/Import JSON.
+ * Vite env required (project root .env.local):
+ *  VITE_FIREBASE_API_KEY=...
+ *  VITE_FIREBASE_AUTH_DOMAIN=...
+ *  VITE_FIREBASE_PROJECT_ID=...
+ *  VITE_FIREBASE_APP_ID=...
  */
 
-const LS_KEY = "sb_squares_fundraiser_plain_v1";
+import { initializeApp, getApps } from "firebase/app";
+import {
+  getAuth,
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  signInWithPopup,
+  signOut,
+} from "firebase/auth";
+import {
+  getFirestore,
+  doc,
+  onSnapshot,
+  setDoc,
+  serverTimestamp,
+} from "firebase/firestore";
+
+// ----------------------------
+// Safe env access (Vite)
+// ----------------------------
+const ENV = import.meta.env || {};
+
+const REQUIRED_ENV_KEYS = [
+  "VITE_FIREBASE_API_KEY",
+  "VITE_FIREBASE_AUTH_DOMAIN",
+  "VITE_FIREBASE_PROJECT_ID",
+  "VITE_FIREBASE_APP_ID",
+];
+
+const missingEnvKeys = REQUIRED_ENV_KEYS.filter((k) => !ENV[k]);
+
+// ----------------------------
+// Firebase init (guarded)
+// ----------------------------
+let auth = null;
+let db = null;
+
+if (missingEnvKeys.length === 0) {
+  const app = getApps().length
+    ? getApps()[0]
+    : initializeApp({
+        apiKey: ENV.VITE_FIREBASE_API_KEY,
+        authDomain: ENV.VITE_FIREBASE_AUTH_DOMAIN,
+        projectId: ENV.VITE_FIREBASE_PROJECT_ID,
+        appId: ENV.VITE_FIREBASE_APP_ID,
+        storageBucket: ENV.VITE_FIREBASE_STORAGE_BUCKET,
+        messagingSenderId: ENV.VITE_FIREBASE_MESSAGING_SENDER_ID,
+      });
+  auth = getAuth(app);
+  db = getFirestore(app);
+}
+
+// ----------------------------
+// Config
+// ----------------------------
+const FUNDRAISER_DOC_PATH = { collection: "fundraisers", id: "default" };
+
+// 3 admins (Google emails)
+const ADMIN_EMAILS = [
+  "spiyer@gmail.com",
+  "sandhya.vsv@gmail.com",
+  "shriyaiyer23@gmail.com",
+].map((e) => e.toLowerCase());
+
 const range10 = [...Array(10)].map((_, i) => i);
+
+const DONATION_PER_SQUARE = 5;
+const FUNDRAISING_GOAL = 500;
 
 // ----------------------------
 // Tiny UI primitives (Tailwind)
 // ----------------------------
-
 function cx(...parts) {
   return parts.filter(Boolean).join(" ");
 }
 
 function Card({ className = "", children }) {
-  return <div className={cx("rounded-2xl border bg-white shadow-sm", className)}>{children}</div>;
+  return (
+    <div className={cx("rounded-2xl border bg-white shadow-sm", className)}>
+      {children}
+    </div>
+  );
 }
 
-function CardHeader({ className = "", children }) {
-  return <div className={cx("p-4 md:p-5 border-b", className)}>{children}</div>;
+function CardHeader({ children }) {
+  return <div className="p-4 border-b">{children}</div>;
 }
 
-function CardTitle({ className = "", children }) {
-  return <div className={cx("text-base font-semibold", className)}>{children}</div>;
+function CardTitle({ children }) {
+  return <div className="font-semibold">{children}</div>;
 }
 
-function CardContent({ className = "", children }) {
-  return <div className={cx("p-4 md:p-5", className)}>{children}</div>;
+function CardContent({ children }) {
+  return <div className="p-4">{children}</div>;
 }
 
-function Button({ className = "", variant = "primary", as = "button", ...props }) {
-  const base = "inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-offset-2";
+function Button({ variant = "primary", className = "", ...props }) {
+  const base =
+    "rounded-xl px-3 py-2 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-offset-2";
   const styles = {
     primary: "bg-black text-white hover:bg-black/90 focus:ring-black",
-    secondary: "bg-gray-100 text-gray-900 hover:bg-gray-200 focus:ring-gray-400",
     outline: "border bg-white text-gray-900 hover:bg-gray-50 focus:ring-gray-400",
     ghost: "bg-transparent text-gray-900 hover:bg-gray-100 focus:ring-gray-400",
+    danger: "bg-red-600 text-white hover:bg-red-700 focus:ring-red-600",
   };
-  const Comp = as;
-  return <Comp className={cx(base, styles[variant] || styles.primary, className)} {...props} />;
+  return (
+    <button
+      {...props}
+      className={cx(base, styles[variant] || styles.primary, className)}
+    />
+  );
 }
 
 function Input({ className = "", ...props }) {
   return (
     <input
+      {...props}
       className={cx(
         "w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-black/20",
         className
       )}
-      {...props}
     />
   );
 }
 
-function Label({ className = "", children }) {
-  return <label className={cx("text-sm font-medium", className)}>{children}</label>;
-}
-
-function Switch({ checked, onChange, disabled }) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={() => !disabled && onChange(!checked)}
-      className={cx(
-        "relative inline-flex h-6 w-11 items-center rounded-full border transition",
-        disabled ? "opacity-60" : "",
-        checked ? "bg-black" : "bg-gray-200"
-      )}
-      aria-pressed={checked}
-    >
-      <span
-        className={cx(
-          "inline-block h-5 w-5 transform rounded-full bg-white shadow transition",
-          checked ? "translate-x-5" : "translate-x-1"
-        )}
-      />
-    </button>
-  );
-}
-
-function Separator() {
-  return <div className="h-px w-full bg-gray-200" />;
-}
-
-function Badge({ children, variant = "secondary" }) {
+function Badge({ children, tone = "neutral" }) {
   const styles = {
-    secondary: "bg-gray-100 text-gray-900",
+    neutral: "bg-gray-100 text-gray-900",
     outline: "border bg-white text-gray-900",
+    ok: "bg-emerald-100 text-emerald-900",
+    warn: "bg-amber-100 text-amber-900",
   };
-  return <span className={cx("inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs", styles[variant])}>{children}</span>;
-}
-
-function ToastHost() {
-  // simple toast system
-  const [toasts, setToasts] = useState([]);
-  const addToastRef = useRef(null);
-
-  useEffect(() => {
-    addToastRef.current = (t) => {
-      const id = Math.random().toString(16).slice(2);
-      setToasts((s) => [...s, { id, ...t }]);
-      setTimeout(() => setToasts((s) => s.filter((x) => x.id !== id)), 2200);
-    };
-    window.__SB_TOAST__ = (title, description) => addToastRef.current?.({ title, description });
-    return () => {
-      delete window.__SB_TOAST__;
-    };
-  }, []);
-
   return (
-    <div className="fixed right-4 top-4 z-50 space-y-2">
-      {toasts.map((t) => (
-        <div key={t.id} className="w-[320px] rounded-2xl border bg-white p-3 shadow-lg">
-          <div className="text-sm font-semibold">{t.title}</div>
-          {t.description ? <div className="text-xs text-gray-600 mt-0.5">{t.description}</div> : null}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function toast(title, opts = {}) {
-  if (typeof window !== "undefined" && window.__SB_TOAST__) {
-    window.__SB_TOAST__(title, opts.description || "");
-  }
-}
-
-function Tabs({ value, onValueChange, children }) {
-  // children expect TabsList + TabsContent(s)
-  return <div>{React.Children.map(children, (c) => React.cloneElement(c, { value, onValueChange }))}</div>;
-}
-
-function TabsList({ value, onValueChange, children, className = "" }) {
-  return <div className={cx("grid gap-2", className)}>{React.Children.map(children, (c) => React.cloneElement(c, { value, onValueChange }))}</div>;
-}
-
-function TabsTrigger({ value: current, onValueChange, tabValue, children, className = "" }) {
-  const active = current === tabValue;
-  return (
-    <button
-      type="button"
-      onClick={() => onValueChange(tabValue)}
+    <span
       className={cx(
-        "rounded-xl px-3 py-2 text-sm font-medium border transition",
-        active ? "bg-black text-white border-black" : "bg-white text-gray-900 hover:bg-gray-50",
-        className
+        "inline-flex items-center rounded-full px-2.5 py-1 text-xs",
+        styles[tone] || styles.neutral
       )}
     >
       {children}
-    </button>
+    </span>
   );
 }
 
-function TabsContent({ value: current, tabValue, children, className = "" }) {
-  if (current !== tabValue) return null;
-  return <div className={className}>{children}</div>;
-}
-
-function Dialog({ open, onOpenChange, title, children }) {
-  if (!open) return null;
+function Tabs({ value, onChange, tabs }) {
   return (
-    <div className="fixed inset-0 z-40">
-      <div className="absolute inset-0 bg-black/40" onClick={() => onOpenChange(false)} />
-      <div className="absolute left-1/2 top-1/2 w-[92vw] max-w-md -translate-x-1/2 -translate-y-1/2">
-        <div className="rounded-2xl border bg-white shadow-xl">
-          <div className="flex items-center justify-between gap-3 border-b p-4">
-            <div className="font-semibold text-sm">{title}</div>
-            <Button variant="ghost" onClick={() => onOpenChange(false)} aria-label="Close">✕</Button>
-          </div>
-          <div className="p-4">{children}</div>
-        </div>
-      </div>
+    <div className="flex flex-wrap gap-2">
+      {tabs.map((t) => {
+        const active = value === t.value;
+        return (
+          <button
+            key={t.value}
+            onClick={() => onChange(t.value)}
+            className={cx(
+              "rounded-xl border px-3 py-2 text-sm font-medium transition",
+              active
+                ? "bg-black text-white border-black"
+                : "bg-white text-gray-900 hover:bg-gray-50"
+            )}
+          >
+            {t.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
 
 // ----------------------------
-// App state
+// Data model
 // ----------------------------
-
 function defaultState() {
-  const grid = range10.map(() => range10.map(() => ({ name: "" })));
-
+  // Firestore does NOT allow nested arrays.
+  // We store the grid as an object map instead of a 2D array.
+  // Key format: "r{row}c{col}" → { name }
+  const grid = {};
+  for (let r = 0; r < 10; r++) {
+    for (let c = 0; c < 10; c++) {
+      grid[`r${r}c${c}`] = { name: "" };
+    }
+  }
   return {
     meta: {
-      title: "Super Bowl Squares – Westford Food Pantry Fundraiser",
+      title: "Super Bowl Squares",
       subtitle: "Game day fun for a great cause 💙",
       introHeadline: "Super Bowl Squares to Support the Westford Food Pantry",
-      introBody:
-        "Hi! This fundraiser is run by our daughter to support the Westford Food Pantry. Thank you for helping families in our community.",
+      introBody: [
+  "Hi! My name is Shriya, and I’m raising money to help the Westford Food Pantry. My goal is to raise $500.",
+  "I’m doing a Super Bowl Squares fundraiser because it’s fun and it helps people at the same time!",
+  { heading: "How it works" },
+  "You can donate to pick a Super Bowl square. While you watch the game, you might win a prize—and your donation helps families in Westford.",
+  { heading: "Why I’m doing this" },
+  "My parents taught me that helping others is important. This is my first time doing a fundraiser, and I’m doing it to learn how I can help people in our community.",
+  "All the money raised will go to the Westford Food Pantry.",
+  "Thank you for helping me help others. Every donation makes a difference!",
+],
     },
     teams: { top: "Team A", left: "Team B" },
     numbers: { top: range10, left: range10, randomized: false },
     rules: {
-      bullets: [
-        "Each square is one entry.",
-        "Numbers across the top and side will be randomized AFTER all squares are filled.",
-        "Winners are determined by the LAST digit of each team’s score at Q1, Halftime, Q3, and Final.",
-        "We will contact winners after the game.",
+      title: "Super Bowl Fundraising - Official Rules",
+      blocks: [
+        { type: "p", text: "Each $5.00 donation earns one square on the Super Bowl grid." },
+        { type: "p", text: "Squares are assigned on a first-come, first-served basis." },
+        { type: "h", text: "Number Assignment" },
+        { type: "p", text: "Row and column numbers (0–9) will be assigned randomly once the grid is completely filled." },
+        { type: "p", text: "If the grid is not fully populated, row and column numbers will be assigned randomly one (1) hour before kickoff." },
+        { type: "h", text: "How Winners Are Determined" },
+        { type: "p", text: "Winners for each quarter are determined by the last digit of each team’s score at the end of the quarter." },
+        { type: "indent", text: "Example: If the score is 21–14, the winning square is found at column “1” and row “4.”" },
+        { type: "p", text: "There will be one winner per quarter." },
+        { type: "p", text: "Each quarter winner will receive a $20 Amazon gift card." },
+        { type: "h", text: "Overtime" },
+        { type: "p", text: "Overtime scores do not count." },
+        { type: "p", text: "Only the scores at the end of Q1, Q2, Q3, and Q4 are eligible." },
+        { type: "h", text: "If the Grid Is Not Fully Filled" },
+        { type: "p", text: "If the grid is not completely filled and no winner is determined for a quarter, a winner will be selected as follows:" },
+        { type: "indent", text: "At the end of the 4th quarter, a winner will be chosen randomly from the list of donors who have not already won." },
+        { type: "indent", text: "For every quarter without a winner, one different donor who has not already won will be chosen at random." },
+        { type: "indent2", text: "Example: If 2 quarters have no winner, 2 different donors will be selected randomly." }
       ],
-      notes: "All proceeds go to the Westford Food Pantry. Thank you for supporting our community!",
+      // Backward-compat fields (older docs may still have these)
+      bullets: [],
+      notes: "",
     },
     grid,
     scoreboard: {
       teamA: { q1: 0, halftime: 0, q3: 0, final: 0 },
       teamB: { q1: 0, halftime: 0, q3: 0, final: 0 },
     },
-    payouts: { q1: "", halftime: "", q3: "", final: "" },
-    admin: { enabled: false, passcode: "" },
+    reveals: { q1: false, halftime: false, q3: false, final: false },
     ui: { lockedBoard: false },
     updatedAt: new Date().toISOString(),
   };
-}
-
-function loadState() {
-  try {
-    const raw = localStorage.getItem(LS_KEY);
-    if (!raw) return defaultState();
-    const parsed = JSON.parse(raw);
-    return {
-      ...defaultState(),
-      ...parsed,
-      meta: { ...defaultState().meta, ...(parsed?.meta || {}) },
-      teams: { ...defaultState().teams, ...(parsed?.teams || {}) },
-      numbers: { ...defaultState().numbers, ...(parsed?.numbers || {}) },
-      rules: { ...defaultState().rules, ...(parsed?.rules || {}) },
-      scoreboard: { ...defaultState().scoreboard, ...(parsed?.scoreboard || {}) },
-      payouts: { ...defaultState().payouts, ...(parsed?.payouts || {}) },
-      admin: { ...defaultState().admin, ...(parsed?.admin || {}) },
-      ui: { ...defaultState().ui, ...(parsed?.ui || {}) },
-    };
-  } catch {
-    return defaultState();
-  }
-}
-
-function saveState(s) {
-  localStorage.setItem(LS_KEY, JSON.stringify({ ...s, updatedAt: new Date().toISOString() }));
 }
 
 function clampDigit(v) {
@@ -261,173 +350,60 @@ function computeWinners(numbers, scoreboard) {
     const b = clampDigit(scoreboard.teamB[key]);
     const colIndex = numbers.top.indexOf(a);
     const rowIndex = numbers.left.indexOf(b);
-    winners[key] = { teamA_last: a, teamB_last: b, rowIndex, colIndex, valid: rowIndex >= 0 && colIndex >= 0 };
+    winners[key] = {
+      teamA_last: a,
+      teamB_last: b,
+      rowIndex,
+      colIndex,
+      valid: rowIndex >= 0 && colIndex >= 0,
+    };
   }
   return winners;
 }
 
 // ----------------------------
-// Features
+// Firestore helpers
 // ----------------------------
+function fundraiserDocRef() {
+  return doc(db, FUNDRAISER_DOC_PATH.collection, FUNDRAISER_DOC_PATH.id);
+}
 
-function ExportImport({ state, setState }) {
-  const exportJson = () => {
-    const payload = JSON.stringify(state, null, 2);
-    const blob = new Blob([payload], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "super-bowl-squares.json";
-    a.click();
-    URL.revokeObjectURL(url);
-    toast("Exported!", { description: "Downloaded super-bowl-squares.json" });
-  };
-
-  const importJson = (file) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const parsed = JSON.parse(String(e.target?.result || ""));
-        const merged = {
-          ...defaultState(),
-          ...parsed,
-          meta: { ...defaultState().meta, ...(parsed?.meta || {}) },
-          teams: { ...defaultState().teams, ...(parsed?.teams || {}) },
-          numbers: { ...defaultState().numbers, ...(parsed?.numbers || {}) },
-          rules: { ...defaultState().rules, ...(parsed?.rules || {}) },
-          scoreboard: { ...defaultState().scoreboard, ...(parsed?.scoreboard || {}) },
-          payouts: { ...defaultState().payouts, ...(parsed?.payouts || {}) },
-          admin: { ...defaultState().admin, ...(parsed?.admin || {}) },
-          ui: { ...defaultState().ui, ...(parsed?.ui || {}) },
-        };
-        setState(merged);
-        toast("Imported!", { description: "Board updated from JSON" });
-      } catch {
-        toast("Import failed", { description: "That file wasn't valid JSON." });
-      }
-    };
-    reader.readAsText(file);
-  };
-
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      <Button variant="secondary" onClick={exportJson}>Export</Button>
-
-      <label className="inline-flex">
-        <input
-          type="file"
-          accept="application/json"
-          className="hidden"
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) importJson(f);
-            e.currentTarget.value = "";
-          }}
-        />
-        <Button variant="secondary" as="span">Import</Button>
-      </label>
-
-      <Button
-        variant="ghost"
-        onClick={() => {
-          localStorage.removeItem(LS_KEY);
-          setState(defaultState());
-          toast("Reset", { description: "Board reset to defaults" });
-        }}
-      >
-        Reset
-      </Button>
-    </div>
+async function writeFundraiserState(nextState) {
+  await setDoc(
+    fundraiserDocRef(),
+    {
+      ...nextState,
+      updatedAt: new Date().toISOString(),
+      updatedAtServer: serverTimestamp(),
+    },
+    { merge: true }
   );
 }
 
-function ScoreInputs({ state, setState, disabled }) {
-  const sb = state.scoreboard;
-  const setDigit = (team, key, v) => {
-    const digit = clampDigit(v);
-    setState((s) => ({
-      ...s,
-      scoreboard: { ...s.scoreboard, [team]: { ...s.scoreboard[team], [key]: digit } },
-    }));
-  };
-
-  const box = (teamKey, title) => (
-    <Card>
-      <CardHeader>
-        <CardTitle>{title}</CardTitle>
-      </CardHeader>
-      <CardContent className="grid grid-cols-4 gap-3">
-        {([
-          ["q1", "Q1"],
-          ["halftime", "Half"],
-          ["q3", "Q3"],
-          ["final", "Final"],
-        ]).map(([k, label]) => (
-          <div key={k} className="space-y-1">
-            <Label className="text-xs text-gray-600">{label}</Label>
-            <Input disabled={disabled} value={sb[teamKey][k]} onChange={(e) => setDigit(teamKey, k, e.target.value)} inputMode="numeric" />
-          </div>
-        ))}
-      </CardContent>
-    </Card>
-  );
-
+// ----------------------------
+// Pages
+// ----------------------------
+function FirebaseSetupHelp() {
   return (
-    <div className={cx("grid gap-4 md:grid-cols-2", disabled ? "opacity-60" : "")}> 
-      {box("teamA", `${state.teams.top} last digit`)}
-      {box("teamB", `${state.teams.left} last digit`)}
-    </div>
-  );
-}
-
-function PayoutInputs({ state, setState, disabled }) {
-  const setPayout = (key, v) => setState((s) => ({ ...s, payouts: { ...s.payouts, [key]: v } }));
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Prizes (optional)</CardTitle>
-      </CardHeader>
-      <CardContent className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        {([
-          ["q1", "Q1"],
-          ["halftime", "Halftime"],
-          ["q3", "Q3"],
-          ["final", "Final"],
-        ]).map(([k, label]) => (
-          <div key={k} className="space-y-1">
-            <Label className="text-xs text-gray-600">{label}</Label>
-            <Input disabled={disabled} placeholder="$" value={state.payouts[k]} onChange={(e) => setPayout(k, e.target.value)} />
-          </div>
-        ))}
-      </CardContent>
-    </Card>
-  );
-}
-
-function RulesPage({ state }) {
-  return (
-    <div className="space-y-4">
-      <Card>
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+      <Card className="max-w-xl w-full">
         <CardHeader>
-          <CardTitle>Rules</CardTitle>
+          <CardTitle>Firebase not configured</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-3">
-          <ul className="list-disc pl-5 space-y-2 text-sm">
-            {state.rules.bullets.map((b, idx) => (
-              <li key={idx}>{b}</li>
+        <CardContent className="space-y-3 text-sm text-gray-700">
+          <div>Missing environment variables:</div>
+          <ul className="list-disc pl-5">
+            {missingEnvKeys.map((k) => (
+              <li key={k} className="font-mono">
+                {k}
+              </li>
             ))}
           </ul>
-          {state.rules.notes ? <div className="text-sm text-gray-600">{state.rules.notes}</div> : null}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>How winners are picked</CardTitle>
-        </CardHeader>
-        <CardContent className="text-sm text-gray-600 space-y-2">
-          <div>Example: If the score is 17–24 at the end of the quarter, the last digits are 7 and 4.</div>
-          <div>Find 7 across the top (Team A) and 4 down the side (Team B). That square wins.</div>
+          <div>
+            Create <span className="font-mono">.env.local</span> next to
+            <span className="font-mono"> package.json</span> and restart
+            <span className="font-mono"> npm run dev</span>.
+          </div>
         </CardContent>
       </Card>
     </div>
@@ -435,108 +411,263 @@ function RulesPage({ state }) {
 }
 
 function IntroPage({ state }) {
+  const body = state?.meta?.introBody;
+
+  const renderBody = () => {
+    // Option A: introBody is a simple string (supports line breaks)
+    if (typeof body === "string") {
+      return <div className="whitespace-pre-line">{body}</div>;
+    }
+
+    // Option B: introBody is a structured array (strings + { heading })
+    if (Array.isArray(body)) {
+      return (
+        <div className="space-y-3">
+          {body.map((item, idx) => {
+            if (typeof item === "string") {
+              return <p key={idx}>{item}</p>;
+            }
+            if (item && typeof item === "object" && typeof item.heading === "string") {
+              return (
+                <div key={idx} className="font-semibold pt-1">
+                  {item.heading}
+                </div>
+              );
+            }
+            // Unknown item type: ignore rather than crash
+            return null;
+          })}
+        </div>
+      );
+    }
+
+    // Fallback
+    return null;
+  };
+
   return (
     <div className="space-y-4">
       <Card>
         <CardHeader>
           <CardTitle>{state.meta.introHeadline}</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="text-sm text-gray-600">{state.meta.introBody}</div>
-          <Separator />
-          <div className="text-sm">
-            <div className="font-medium">What you can do here</div>
-            <ul className="list-disc pl-5 space-y-2 text-sm text-gray-600 mt-2">
-              <li>Check the board to see which squares are taken.</li>
-              <li>See the current winning squares as score digits are updated.</li>
-              <li>Read the rules so you know how winners work.</li>
-            </ul>
+        <CardContent className="space-y-3 text-sm text-gray-700">
+          {renderBody()}
+          <div className="text-xs text-gray-500">
+            Tip: refresh the Board page to see live updates.
           </div>
+        </CardContent>
+      </Card>
+
+      <FundraisingProgress state={state} />
+    </div>
+  );
+}
+
+function RulesPage({ state }) {
+  const title = state.rules?.title || "Official Rules";
+  const blocks = Array.isArray(state.rules?.blocks) ? state.rules.blocks : null;
+
+  const renderBlock = (b, idx) => {
+    const type = b?.type || "p";
+    const txt = b?.text || "";
+
+    if (type === "h") {
+      return (
+        <div key={idx} className="mt-4 font-semibold text-gray-900">
+          {txt}
+        </div>
+      );
+    }
+
+    const indentClass =
+      type === "indent2" ? "pl-10" : type === "indent" ? "pl-6" : "";
+
+    return (
+      <div key={idx} className={cx("text-sm text-gray-700 whitespace-pre-line", indentClass)}>
+        {txt}
+      </div>
+    );
+  };
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>{title}</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {blocks ? (
+            <div className="space-y-2">{blocks.map(renderBlock)}</div>
+          ) : (
+            <>
+              <ul className="list-disc pl-5 space-y-2 text-sm text-gray-700">
+                {(state.rules?.bullets || []).map((b, idx) => (
+                  <li key={idx}>{b}</li>
+                ))}
+              </ul>
+              {state.rules?.notes ? (
+                <div className="text-sm text-gray-700 whitespace-pre-line">{state.rules.notes}</div>
+              ) : null}
+            </>
+          )}
         </CardContent>
       </Card>
     </div>
   );
 }
 
-function SquaresGrid({ state, setState, mode }) {
-  const isAdmin = mode === "admin";
-  const locked = state.ui.lockedBoard && isAdmin;
-  const winners = useMemo(() => computeWinners(state.numbers, state.scoreboard), [state.numbers, state.scoreboard]);
+function ScoreInputs({ state, onUpdate, disabled }) {
+  const sb = state.scoreboard;
+  const setDigit = (team, key, v) => {
+    const digit = clampDigit(v);
+    onUpdate({
+      scoreboard: {
+        ...state.scoreboard,
+        [team]: { ...state.scoreboard[team], [key]: digit },
+      },
+    });
+  };
 
-  const [dialog, setDialog] = useState({ open: false, r: 0, c: 0 });
+  const box = (teamKey, title) => (
+    <Card>
+      <CardHeader>
+        <CardTitle>{title}</CardTitle>
+      </CardHeader>
+      <CardContent className={cx("grid grid-cols-4 gap-3", disabled ? "opacity-60" : "")}>
+        {[
+          ["q1", "Q1"],
+          ["halftime", "Half"],
+          ["q3", "Q3"],
+          ["final", "Final"],
+        ].map(([k, label]) => (
+          <div key={k} className="space-y-1">
+            <div className="text-xs text-gray-600">{label}</div>
+            <Input
+              disabled={disabled}
+              value={sb[teamKey][k]}
+              onChange={(e) => setDigit(teamKey, k, e.target.value)}
+              inputMode="numeric"
+            />
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+
+  return (
+    <div className="grid gap-4 md:grid-cols-2">
+      {box("teamA", `${state.teams.top} last digit`)}
+      {box("teamB", `${state.teams.left} last digit`)}
+    </div>
+  );
+}
+
+function BoardPage({ state }) {
+  const winners = useMemo(
+    () => computeWinners(state.numbers, state.scoreboard),
+    [state.numbers, state.scoreboard]
+  );
 
   const cellIsWinner = (r, c) => {
     for (const k of ["q1", "halftime", "q3", "final"]) {
+      if (!state.reveals?.[k]) continue; 
       const w = winners[k];
       if (w?.valid && w.rowIndex === r && w.colIndex === c) return k;
     }
     return null;
   };
 
-  const updateCell = (r, c, patch) => {
-    setState((s) => {
-      const next = structuredClone(s);
-      next.grid[r][c] = { ...next.grid[r][c], ...patch };
-      return next;
-    });
-  };
-
-  const openEdit = (r, c) => setDialog({ open: true, r, c });
-  const closeEdit = () => setDialog((d) => ({ ...d, open: false }));
-
-  const activeCell = dialog.open ? state.grid[dialog.r][dialog.c] : null;
-
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="text-xl font-semibold">{state.meta.title}</div>
           <div className="text-sm text-gray-600">{state.meta.subtitle}</div>
-          <div className="mt-1 text-xs text-gray-500">Last updated: {new Date(state.updatedAt).toLocaleString()}</div>
+          <div className="text-xs text-gray-500 mt-1">
+            Last updated: {new Date(state.updatedAt).toLocaleString()}
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {state.ui.lockedBoard ? <Badge>Locked</Badge> : <Badge variant="outline">Editable</Badge>}
+        <div className="flex items-center gap-2">
+          {state.ui.lockedBoard ? (
+            <Badge>Locked</Badge>
+          ) : (
+            <Badge tone="outline">Open</Badge>
+          )}
         </div>
       </div>
 
+      <FundraisingProgress state={state} />
+
+
       <Card className="overflow-hidden">
-        <CardContent className="p-0">
+        <CardContent>
           <div className="w-full overflow-auto">
-            <table className="min-w-[900px] border-collapse">
+            <table className="min-w-[980px] border-collapse border-4 border-black bg-white">
               <thead>
+                {/* Row 1: top team name */}
                 <tr>
-                  <th className="sticky left-0 top-0 z-20 bg-white border p-2 text-xs text-gray-600">{state.teams.left} \ {state.teams.top}</th>
+                  <th className="border-2 border-black w-10" />
+                  <th className="border-2 border-black w-10" />
+                  <th colSpan={10} className="border-2 border-black text-center font-semibold py-2">
+                    {state.teams.top}
+                  </th>
+                </tr>
+
+                {/* Row 2: top digits */}
+                <tr>
+                  <th className="border-2 border-black w-10" />
+                  <th className="border-2 border-black w-10" />
                   {state.numbers.top.map((d, idx) => (
-                    <th key={idx} className="sticky top-0 z-10 bg-white border p-2 text-center text-sm font-semibold">{d}</th>
+                    <th 
+                      key={idx} 
+                      className="border-2 border-black text-center font-semibold w-20 py-1"
+                    >
+                      {state.numbers.randomized ? d : `X${idx}`}
+                    </th>
                   ))}
                 </tr>
               </thead>
+
               <tbody>
                 {range10.map((r) => (
                   <tr key={r}>
-                    <th className="sticky left-0 z-10 bg-white border p-2 text-center text-sm font-semibold">{state.numbers.left[r]}</th>
+                    {/* Left team name, vertical, spans all 10 rows */}
+                    {r === 0 ? (
+                      <th rowSpan={10} className="border-2 border-black w-10 text-center font-semibold">
+                        <div className="[writing-mode:vertical-rl] rotate-180 mx-auto">
+                          {state.teams.left}
+                        </div>
+                      </th>
+                    ) : null}
+
+                    {/* Row digit */}
+                    <th className="border-2 border-black text-center font-semibold w-10">
+                      {state.numbers.randomized ? state.numbers.left[r] : `Y${r}`}
+                    </th>
+
+                    {/* 10 squares */}
                     {range10.map((c) => {
-                      const cell = state.grid[r][c];
+                      const cell = state.grid[`r${r}c${c}`];
                       const winKey = cellIsWinner(r, c);
                       const isWin = Boolean(winKey);
+
                       return (
-                        <td key={c} className={cx("border align-top", isWin ? "bg-gray-100" : "")}>
-                          <button
-                            className={cx(
-                              "w-full h-[72px] p-2 text-left text-sm transition",
-                              isAdmin ? "hover:bg-gray-50" : "cursor-default"
-                            )}
-                            disabled={!isAdmin}
-                            onClick={() => openEdit(r, c)}
-                            title={isAdmin ? "Click to edit" : ""}
-                          >
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="min-w-0">
-                                <div className="font-medium truncate">{cell.name || ""}</div>
-                              </div>
-                              {isWin ? <Badge>{winKey === "halftime" ? "Half" : winKey.toUpperCase()}</Badge> : null}
+                        <td
+                          key={c}
+                          className={cx("border-2 border-black align-top p-2 h-12", isWin ? "bg-gray-100" : "")}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="font-medium truncate max-w-[220px]">
+                              {cell?.name || ""}
                             </div>
-                          </button>
+
+                            {isWin ? (
+                              <span className="text-[11px] font-semibold border border-black rounded-full px-2 py-0.5">
+                                {winKey === "halftime" ? "Half" : winKey.toUpperCase()}
+                              </span>
+                           ) : null}
+                          </div>
                         </td>
                       );
                     })}
@@ -544,300 +675,524 @@ function SquaresGrid({ state, setState, mode }) {
                 ))}
               </tbody>
             </table>
+
           </div>
         </CardContent>
       </Card>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Winners (auto)</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2 text-sm">
-            {([
-              ["q1", "Q1"],
-              ["halftime", "Halftime"],
-              ["q3", "Q3"],
-              ["final", "Final"],
-            ]).map(([k, label]) => {
-              const w = winners[k];
-              const cell = w?.valid ? state.grid[w.rowIndex][w.colIndex] : null;
-              const payout = state.payouts[k];
-              return (
-                <div key={k} className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="font-medium">{label}</div>
-                    <div className="text-xs text-gray-600">Last digits: {state.teams.left} {w.teamB_last} / {state.teams.top} {w.teamA_last}</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="font-semibold truncate max-w-[240px]">{cell?.name || "—"}</div>
+      <Card>
+        <CardHeader>
+          <CardTitle>Current winners</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2 text-sm">
+          {[
+            ["q1", "Q1"],
+            ["halftime", "Halftime"],
+            ["q3", "Q3"],
+            ["final", "Final"],
+          ].map(([k, label]) => {
+            const revealed = Boolean(state.reveals?.[k]);
+            const w = revealed ? winners[k] : null;
+            const cell = revealed && w?.valid ? state.grid[`r${w.rowIndex}c${w.colIndex}`] : null;
+            return (
+              <div key={k} className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="font-medium">{label}</div>
+                  {revealed ? (
                     <div className="text-xs text-gray-600">
-                      {cell ? `Square ${state.numbers.left[w.rowIndex]}–${state.numbers.top[w.colIndex]}` : "—"}
-                      {payout ? ` • Prize ${payout}` : ""}
+                      Last digits: {state.teams.left} {w.teamB_last} / {state.teams.top} {w.teamA_last}
                     </div>
-                  </div>
+                  ) : (
+                    <div className="text-xs text-gray-500">
+                      Will be revealed at end of {label}.
+                    </div>
+                  )}
                 </div>
-              );
-            })}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Quick notes</CardTitle>
-          </CardHeader>
-          <CardContent className="text-sm text-gray-600 space-y-2">
-            <div>• Names only on the board (no donation info shown).</div>
-            <div>• Admin can update score digits as the game progresses.</div>
-            <div>• Use Export/Import to move this board to another device.</div>
-          </CardContent>
-        </Card>
-      </div>
-
-      <Dialog
-        open={dialog.open}
-        onOpenChange={(v) => (v ? null : closeEdit())}
-        title={dialog.open ? `Square ${state.numbers.left[dialog.r]} – ${state.numbers.top[dialog.c]}` : ""}
-      >
-        {dialog.open && activeCell ? (
-          <div className="grid gap-3">
-            <div className="grid gap-1">
-              <Label>Name</Label>
-              <Input
-                disabled={locked}
-                value={activeCell.name}
-                onChange={(e) => updateCell(dialog.r, dialog.c, { name: e.target.value })}
-                placeholder="Name"
-              />
-            </div>
-            <div className="flex items-center justify-end gap-2 pt-2">
-              <Button
-                variant="ghost"
-                disabled={locked}
-                onClick={() => {
-                  updateCell(dialog.r, dialog.c, { name: "" });
-                  toast("Cleared", { description: "Square cleared" });
-                }}
-              >
-                Clear
-              </Button>
-              <Button
-                onClick={() => {
-                  toast("Saved", { description: "Changes are saved automatically" });
-                  closeEdit();
-                }}
-              >
-                Done
-              </Button>
-            </div>
-          </div>
-        ) : null}
-      </Dialog>
+                <div className="font-semibold truncate max-w-[260px]">
+                  {revealed ? (cell?.name || "—") : "Hidden (not revealed yet)"}
+                </div>
+              </div>
+            );
+          })}
+        </CardContent>
+      </Card>
     </div>
   );
 }
 
-function AdminGate({ state, setAuthed, children }) {
-  const [code, setCode] = useState("");
+function deepClone(obj) {
+  // structuredClone is supported in modern browsers; fallback is fine for this simple JSON state.
+  if (typeof structuredClone === "function") return structuredClone(obj);
+  return JSON.parse(JSON.stringify(obj));
+}
 
-  if (!state.admin.enabled) return children;
+function shallowEqualJSON(a, b) {
+  try {
+    return JSON.stringify(a) === JSON.stringify(b);
+  } catch {
+    return false;
+  }
+}
+
+function countFilledSquares(grid) {
+  if (!grid) return 0;
+  let n = 0;
+  for (const k of Object.keys(grid)) {
+    const name = (grid[k]?.name || "").trim();
+    if (name.length > 0) n += 1;
+  }
+  return n;
+}
+
+function formatMoneyUSD(amount) {
+  return `$${Math.round(amount)}`;
+}
+
+function FundraisingProgress({ state }) {
+  const filled = countFilledSquares(state.grid);
+  const total = filled * DONATION_PER_SQUARE;
+  const goal = FUNDRAISING_GOAL;
+  const pct = goal > 0 ? Math.min(100, Math.round((total / goal) * 100)) : 0;
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Admin access</CardTitle>
+        <div className="flex items-center justify-between gap-2">
+          <CardTitle>Total money raised</CardTitle>
+          <Badge tone={pct >= 100 ? "ok" : "outline"}>Goal: {formatMoneyUSD(goal)}</Badge>
+        </div>
       </CardHeader>
       <CardContent className="space-y-3">
-        <div className="text-sm text-gray-600">Enter the passcode to edit the board.</div>
-        <div className="flex items-center gap-2">
-          <Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Passcode" type="password" className="max-w-xs" />
-          <Button
-            onClick={() => {
-              if (code === state.admin.passcode) {
-                setAuthed(true);
-                toast("Welcome", { description: "Admin mode enabled" });
-              } else {
-                toast("Nope", { description: "Wrong passcode" });
-              }
-            }}
-          >
-            Unlock
-          </Button>
+        <div className="flex items-end justify-between gap-3">
+          <div>
+            <div className="text-3xl font-bold">{formatMoneyUSD(total)}</div>
+            <div className="text-xs text-gray-600">
+              {filled} squares filled × {formatMoneyUSD(DONATION_PER_SQUARE)} per square
+            </div>
+          </div>
+          <div className="text-sm font-semibold">{pct}%</div>
         </div>
-        <div className="text-xs text-gray-600">Note: This is a simple client-side gate (convenience only, not strong security).</div>
+
+        <div className="h-3 w-full rounded-full bg-gray-100 overflow-hidden border">
+          <div className="h-full bg-black" style={{ width: `${pct}%` }} />
+        </div>
+
+        <div className="text-xs text-gray-600">
+          {pct >= 100 ? "Goal reached — thank you!" : `${formatMoneyUSD(goal - total)} to go to reach the goal.`}
+        </div>
       </CardContent>
     </Card>
   );
 }
 
-// ----------------------------
-// Main component
-// ----------------------------
+function AdminPage({ state, onAdminUpdate, isAdmin }) {
+  const [draft, setDraft] = useState(() => deepClone(state));
 
-export default function SuperBowlSquaresFundraiser() {
-  const [state, setState] = useState(() => (typeof window === "undefined" ? defaultState() : loadState()));
-  const [authed, setAuthed] = useState(false);
-  const [tab, setTab] = useState("intro");
-
+  // When the Firestore-backed state changes (or admin opens page), refresh draft
   useEffect(() => {
-    saveState(state);
+    setDraft(deepClone(state));
   }, [state]);
 
-  const randomizeNumbers = () => {
-    const shuffleArr = (arr) => {
-      const a = [...arr];
-      for (let i = a.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [a[i], a[j]] = [a[j], a[i]];
-      }
-      return a;
-    };
+  const locked = draft.ui.lockedBoard;
+  const dirty = useMemo(() => !shallowEqualJSON(draft, state), [draft, state]);
 
-    setState((s) => ({
-      ...s,
-      numbers: { ...s.numbers, top: shuffleArr(range10), left: shuffleArr(range10), randomized: true },
-    }));
-    toast("Randomized", { description: "Header numbers shuffled" });
+  const updateDraft = (patch) => {
+    setDraft((prev) => ({ ...prev, ...patch }));
   };
 
-  const isAdminMode = authed || !state.admin.enabled;
+  const updateDraftDeep = (pathSetter) => {
+    setDraft((prev) => {
+      const next = deepClone(prev);
+      pathSetter(next);
+      return next;
+    });
+  };
+
+  const shuffle = (arr) => {
+    const a = [...arr];
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  };
+
+  const randomizeNumbers = () => {
+    updateDraft({
+      numbers: {
+        ...draft.numbers,
+        top: shuffle(range10),
+        left: shuffle(range10),
+        randomized: true,
+      },
+    });
+  };
+
+  const setCellNameLocal = (r, c, name) => {
+    const key = `r${r}c${c}`;
+    updateDraftDeep((next) => {
+      next.grid[key] = { name };
+    });
+  };
+
+  const saveNow = async () => {
+    if (!isAdmin) return;
+    await onAdminUpdate(draft, true);
+  };
+
+  const discard = () => {
+    setDraft(deepClone(state));
+  };
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <CardTitle>Admin controls</CardTitle>
+            <div className="flex items-center gap-2">
+              {dirty ? <Badge tone="warn">Unsaved changes</Badge> : <Badge tone="ok">Saved</Badge>}
+              <Button variant="outline" onClick={discard} disabled={!dirty}>
+                Discard
+              </Button>
+              <Button onClick={saveNow} disabled={!dirty || !isAdmin}>
+                Save changes
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="space-y-1">
+              <div className="text-sm font-medium">Title</div>
+              <Input
+                value={draft.meta.title}
+                onChange={(e) => updateDraft({ meta: { ...draft.meta, title: e.target.value } })}
+              />
+            </div>
+            <div className="space-y-1">
+              <div className="text-sm font-medium">Subtitle</div>
+              <Input
+                value={draft.meta.subtitle}
+                onChange={(e) =>
+                  updateDraft({ meta: { ...draft.meta, subtitle: e.target.value } })
+                }
+              />
+            </div>
+            <div className="space-y-1">
+              <div className="text-sm font-medium">Top team name</div>
+              <Input
+                value={draft.teams.top}
+                onChange={(e) => updateDraft({ teams: { ...draft.teams, top: e.target.value } })}
+              />
+            </div>
+            <div className="space-y-1">
+              <div className="text-sm font-medium">Left team name</div>
+              <Input
+                value={draft.teams.left}
+                onChange={(e) =>
+                  updateDraft({ teams: { ...draft.teams, left: e.target.value } })
+                }
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" onClick={randomizeNumbers} disabled={!isAdmin}>
+              Randomize header numbers
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() =>
+                updateDraft({ ui: { ...draft.ui, lockedBoard: !draft.ui.lockedBoard } })
+              }
+              disabled={!isAdmin}
+            >
+              {locked ? "Unlock board edits" : "Lock board edits"}
+            </Button>
+            <Button
+              variant="danger"
+              onClick={async () => {
+                const ok = window.confirm(
+                  "Reset the entire board to defaults? This overwrites Firestore."
+                );
+                if (!ok) return;
+                const fresh = defaultState();
+                await onAdminUpdate(fresh, true);
+              }}
+              disabled={!isAdmin}
+            >
+              Reset board
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Reveal winners (manual)</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2 text-sm">
+          {[
+            ["q1", "Q1"],
+            ["halftime", "Halftime"],
+            ["q3", "Q3"],
+            ["final", "Final"],
+          ].map(([k, label]) => (
+            <label key={k} className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={Boolean(draft.reveals?.[k])}
+                onChange={(e) =>
+                  updateDraft({
+                    reveals: { ...(draft.reveals || {}), [k]: e.target.checked },
+                  })
+                }
+                disabled={!isAdmin}
+             />
+             <span>Reveal {label} winner</span>
+           </label>
+         ))}
+
+         <div className="text-xs text-gray-500">
+           Winners on the Board stay hidden until you reveal them, then click{" "}
+           <span className="font-medium">Save changes</span>.
+         </div>
+       </CardContent>
+     </Card>
+
+      <ScoreInputs
+        state={draft}
+        onUpdate={(patch) => updateDraft(patch)}
+        disabled={!isAdmin}
+      />
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Edit squares</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="w-full overflow-auto">
+            <table className="min-w-[980px] border-collapse border-4 border-black bg-white">
+              <thead>
+                <tr>
+                  <th className="border-2 border-black w-10" />
+                  <th className="border-2 border-black w-10" />
+                  <th colSpan={10} className="border-2 border-black text-center font-semibold py-2">
+                    {draft.teams.top}
+                  </th>
+                </tr>
+
+                <tr>
+                  <th className="border-2 border-black w-10" />
+                  <th className="border-2 border-black w-10" />
+                  {draft.numbers.top.map((d, idx) => (
+                    <th 
+                      key={idx} 
+                      className="border-2 border-black text-center font-semibold w-20 py-1"
+                    >
+                      {draft.numbers.randomized ? d : `X${idx}`}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+
+              <tbody>
+                {range10.map((r) => (
+                  <tr key={r}>
+                    {r === 0 ? (
+                      <th rowSpan={10} className="border-2 border-black w-10 text-center font-semibold">
+                        <div className="[writing-mode:vertical-rl] rotate-180 mx-auto">
+                          {draft.teams.left}
+                        </div>
+                      </th>
+                    ) : null}
+
+                    <th className="border-2 border-black text-center font-semibold w-10">
+                      {draft.numbers.randomized ? draft.numbers.left[r] : `Y${r}`}
+                    </th>
+
+                    {range10.map((c) => (
+                      <td key={c} className="border-2 border-black p-1 h-12">
+                        <Input
+                          disabled={!isAdmin || locked}
+                          value={draft.grid[`r${r}c${c}`]?.name || ""}
+                          onChange={(e) => setCellNameLocal(r, c, e.target.value)}
+                          placeholder=""
+                          className="h-10"
+                        />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {locked ? (
+            <div className="mt-3 text-xs text-gray-600">
+              Board is locked. Unlock to edit.
+            </div>
+          ) : null}
+          <div className="mt-3 text-xs text-gray-600">
+            Tip: Names and scores are saved only when you click <span className="font-medium">Save changes</span>.
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ----------------------------
+// Main
+// ----------------------------
+export default function SuperBowlSquaresFundraiser() {
+  // If Firebase is not configured, show instructions instead of crashing
+  if (!auth || !db) {
+    return <FirebaseSetupHelp />;
+  }
+
+  const [tab, setTab] = useState("intro");
+  const [state, setState] = useState(null);
+  const [user, setUser] = useState(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    return onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      const email = (u?.email || "").toLowerCase();
+      setIsAdmin(Boolean(email) && ADMIN_EMAILS.includes(email));
+    });
+  }, []);
+
+  useEffect(() => {
+    return onSnapshot(
+      fundraiserDocRef(),
+      (snap) => {
+        if (!snap.exists()) {
+          setState(defaultState());
+          setLoading(false);
+          return;
+        }
+        const data = snap.data();
+        // Merge with defaults so old docs don't break new fields
+        const d = defaultState();
+        const merged = {
+          ...d,
+          ...data,
+          meta: { ...d.meta, ...(data?.meta || {}) },
+          teams: { ...d.teams, ...(data?.teams || {}) },
+          numbers: { ...d.numbers, ...(data?.numbers || {}) },
+          rules: { ...d.rules, ...(data?.rules || {}) },
+          scoreboard: { ...d.scoreboard, ...(data?.scoreboard || {}) },
+          reveals: { ...d.reveals, ...(data?.reveals || {}) },
+          ui: { ...d.ui, ...(data?.ui || {}) },
+        };
+        setState(merged);
+        setLoading(false);
+      },
+      (err) => {
+        console.error(err);
+        setLoading(false);
+      }
+    );
+  }, []);
+
+  const signIn = async () => {
+    const provider = new GoogleAuthProvider();
+    await signInWithPopup(auth, provider);
+  };
+
+  const signOutNow = async () => {
+    await signOut(auth);
+    setTab("intro");
+  };
+
+  // Admin-only update: optimistic UI + write to Firestore
+  const onAdminUpdate = async (patchOrFullState, isFullReplace = false) => {
+    if (!isAdmin) return;
+    const next = isFullReplace ? patchOrFullState : { ...state, ...patchOrFullState };
+    setState(next);
+    try {
+      await writeFundraiserState(next);
+    } catch (e) {
+      console.error(e);
+      alert(`Save failed: ${e?.message || e}`);
+    }
+  };
+
+  const tabs = [
+    { value: "intro", label: "Intro" },
+    { value: "board", label: "Board" },
+    { value: "rules", label: "Rules" },
+    ...(isAdmin ? [{ value: "admin", label: "Admin" }] : []),
+  ];
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <ToastHost />
       <div className="mx-auto max-w-6xl p-4 md:p-8 space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="space-y-1">
-            <div className="text-2xl md:text-3xl font-bold tracking-tight">Super Bowl Squares</div>
-            <div className="text-sm text-gray-600">Intro + Rules + Live Board (names only) + Admin updates</div>
+          <div>
+            <div className="flex items-center gap-2">
+              <div className="text-2xl font-bold">Super Bowl Fundraising</div>
+              <Badge tone="outline">v{APP_VERSION}</Badge>
+            </div>
+            <div className="text-sm text-gray-600">
+              Signed in: {user?.email || "public"}{" "}
+              {isAdmin ? <Badge tone="ok">Admin</Badge> : <Badge tone="outline">Public</Badge>}
+            </div>
           </div>
-          <ExportImport state={state} setState={setState} />
+          <div className="flex items-center gap-2">
+            {!user ? (
+              <Button variant="outline" onClick={signIn}>
+                Sign in (Admin)
+              </Button>
+            ) : (
+              <Button variant="outline" onClick={signOutNow}>
+                Sign out
+              </Button>
+            )}
+          </div>
         </div>
 
-        <Tabs value={tab} onValueChange={setTab}>
-          <TabsList className="grid w-full grid-cols-2 gap-2 md:grid-cols-4 md:w-[680px]">
-            <TabsTrigger tabValue="intro">Intro</TabsTrigger>
-            <TabsTrigger tabValue="board">Board</TabsTrigger>
-            <TabsTrigger tabValue="rules">Rules</TabsTrigger>
-            <TabsTrigger tabValue="admin">Admin</TabsTrigger>
-          </TabsList>
+        <Tabs value={tab} onChange={setTab} tabs={tabs} />
 
-          <TabsContent tabValue="intro" className="mt-4 space-y-4">
-            <IntroPage state={state} />
-          </TabsContent>
+        {loading || !state ? (
+          <Card>
+            <CardContent>
+              <div className="text-sm text-gray-600">Loading board…</div>
+            </CardContent>
+          </Card>
+        ) : null}
 
-          <TabsContent tabValue="board" className="mt-4 space-y-4">
-            <SquaresGrid state={state} setState={setState} mode="board" />
-          </TabsContent>
-
-          <TabsContent tabValue="rules" className="mt-4 space-y-4">
-            <RulesPage state={state} />
-          </TabsContent>
-
-          <TabsContent tabValue="admin" className="mt-4 space-y-4">
-            <AdminGate state={state} setAuthed={setAuthed}>
-              <div className="grid gap-4">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Settings</CardTitle>
-                  </CardHeader>
-                  <CardContent className="grid gap-4 md:grid-cols-2">
-                    <div className="grid gap-2">
-                      <Label>Title</Label>
-                      <Input value={state.meta.title} onChange={(e) => setState((s) => ({ ...s, meta: { ...s.meta, title: e.target.value } }))} />
-                    </div>
-                    <div className="grid gap-2">
-                      <Label>Subtitle</Label>
-                      <Input value={state.meta.subtitle} onChange={(e) => setState((s) => ({ ...s, meta: { ...s.meta, subtitle: e.target.value } }))} />
-                    </div>
-
-                    <div className="grid gap-2 md:col-span-2">
-                      <Label>Intro headline</Label>
-                      <Input value={state.meta.introHeadline} onChange={(e) => setState((s) => ({ ...s, meta: { ...s.meta, introHeadline: e.target.value } }))} />
-                    </div>
-                    <div className="grid gap-2 md:col-span-2">
-                      <Label>Intro text</Label>
-                      <Input value={state.meta.introBody} onChange={(e) => setState((s) => ({ ...s, meta: { ...s.meta, introBody: e.target.value } }))} />
-                    </div>
-
-                    <div className="grid gap-2">
-                      <Label>Top team name</Label>
-                      <Input value={state.teams.top} onChange={(e) => setState((s) => ({ ...s, teams: { ...s.teams, top: e.target.value } }))} />
-                    </div>
-                    <div className="grid gap-2">
-                      <Label>Left team name</Label>
-                      <Input value={state.teams.left} onChange={(e) => setState((s) => ({ ...s, teams: { ...s.teams, left: e.target.value } }))} />
-                    </div>
-
-                    <div className="flex items-center justify-between md:col-span-2">
-                      <div className="grid gap-0.5">
-                        <Label>Lock board edits</Label>
-                        <div className="text-xs text-gray-600">Prevents changes to squares unless you unlock</div>
-                      </div>
-                      <Switch checked={state.ui.lockedBoard} onChange={(v) => setState((s) => ({ ...s, ui: { ...s.ui, lockedBoard: v } }))} />
-                    </div>
-
-                    <Separator />
-
-                    <div className="flex items-center justify-between md:col-span-2">
-                      <div className="grid gap-0.5">
-                        <Label>Enable admin passcode gate</Label>
-                        <div className="text-xs text-gray-600">Convenience only (not strong security)</div>
-                      </div>
-                      <Switch
-                        checked={state.admin.enabled}
-                        onChange={(v) => {
-                          setAuthed(!v);
-                          setState((s) => ({ ...s, admin: { ...s.admin, enabled: v } }));
-                        }}
-                      />
-                    </div>
-
-                    {state.admin.enabled ? (
-                      <div className="grid gap-2 md:col-span-2">
-                        <Label>Admin passcode</Label>
-                        <Input
-                          value={state.admin.passcode}
-                          onChange={(e) => setState((s) => ({ ...s, admin: { ...s.admin, passcode: e.target.value } }))}
-                          placeholder="Set a passcode"
-                          type="password"
-                        />
-                      </div>
-                    ) : null}
-
-                    <div className="flex flex-wrap items-center gap-2 md:col-span-2">
-                      <Button variant="secondary" onClick={randomizeNumbers}>Randomize header numbers</Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => {
-                          setState((s) => ({ ...s, numbers: { ...s.numbers, top: range10, left: range10, randomized: false } }));
-                          toast("Reset", { description: "Header numbers set to 0–9" });
-                        }}
-                      >
-                        Reset numbers
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <ScoreInputs state={state} setState={setState} disabled={!isAdminMode} />
-                <PayoutInputs state={state} setState={setState} disabled={!isAdminMode} />
-
-                <SquaresGrid state={state} setState={setState} mode="admin" />
-              </div>
-            </AdminGate>
-          </TabsContent>
-        </Tabs>
+        {!loading && state ? (
+          <>
+            {tab === "intro" ? <IntroPage state={state} /> : null}
+            {tab === "board" ? <BoardPage state={state} /> : null}
+            {tab === "rules" ? <RulesPage state={state} /> : null}
+            {tab === "admin" && isAdmin ? (
+              <AdminPage state={state} onAdminUpdate={onAdminUpdate} isAdmin={isAdmin} />
+            ) : null}
+          </>
+        ) : null}
 
         <Card>
           <CardHeader>
-            <CardTitle>GitHub Pages tip</CardTitle>
+            <CardTitle>One-time setup reminder</CardTitle>
           </CardHeader>
-          <CardContent className="text-sm text-gray-600 space-y-2">
-            <div>This file is now plain React + Tailwind, so it works great with a Vite build on GitHub Pages.</div>
-            <div>Next step: create a Vite React app, paste this component into <span className="font-mono">src/App.jsx</span>, then deploy.</div>
+          <CardContent className="text-sm text-gray-700 space-y-2">
+            <div>
+              If you can sign in but edits fail, your Firestore Rules may be blocking writes (that’s good!).
+            </div>
+            <div>
+              You must allow public reads and admin-only writes in Firestore Rules.
+            </div>
           </CardContent>
         </Card>
+
+        <div className="text-xs text-gray-500">
+          Version {APP_VERSION} • Last change: {CHANGELOG[0]?.date}
+        </div>
       </div>
     </div>
   );
