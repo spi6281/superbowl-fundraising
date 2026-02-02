@@ -5,8 +5,15 @@ import React, { useEffect, useMemo, useState } from "react";
 // ============================
 // I will update this section every time I change this file.
 // You can also copy it into a separate CHANGELOG.md if you prefer.
-const APP_VERSION = "0.13.0";
+const APP_VERSION = "0.14.0";
 const CHANGELOG = [
+  {
+    version: "0.14.0",
+    date: "2026-02-01",
+    changes: [
+      "Minor changes to Rules and Intro",
+    ],
+  },
   {
     version: "0.13.0",
     date: "2026-02-01",
@@ -311,7 +318,7 @@ function defaultState() {
       title: "Super Bowl Fundraising - Official Rules",
       blocks: [
         { type: "p", text: "- Each $5.00 donation earns one square on the Super Bowl grid." },
-        { type: "p", text: "- Squares are assigned on a first-come, first-served basis." },
+        { type: "p", text: "- Squares are assigned on a first-come, first-served basis. Choose from open slots and let us know, we will fill it in." },
         { type: "h", text: "Number Assignment" },
         { type: "p", text: "- Row and column numbers (0–9) will be assigned randomly once the grid is completely filled." },
         { type: "p", text: "- If the grid is not fully populated, row and column numbers will be assigned randomly one (1) hour before kickoff." },
@@ -608,6 +615,27 @@ function BoardPage({ state }) {
 
       <FundraisingProgress state={state} />
 
+      {!state.numbers.randomized ? (
+        <div className="space-y-3">
+          <Card className="border-amber-200 bg-amber-50">
+            <CardContent className="text-sm text-amber-900">
+              <span className="font-semibold">Note:</span>{" "}
+              The numbers X0–X9 and Y0–Y9 are placeholders to make communication easy.
+              They will be replaced with numbers 0–9 randomized in order for both the rows
+              and columns, either when the grid is full or 1 hour before the game if it’s not full.
+            </CardContent>
+          </Card>
+
+          <Card className="border-amber-200 bg-amber-50">
+            <CardContent className="text-sm text-amber-900">
+              <span className="font-semibold">Important:</span>{" "}
+              Participants will not be able to edit the squares directly.
+              They must choose their desired squares and communicate their selections to the admin.
+              The admin will enter and manage all square assignments.
+            </CardContent>
+          </Card>
+        </div>
+      ) : null}
 
       <Card className="overflow-hidden">
         <CardContent>
