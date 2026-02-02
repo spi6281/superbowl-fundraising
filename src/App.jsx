@@ -5,8 +5,15 @@ import React, { useEffect, useMemo, useState } from "react";
 // ============================
 // I will update this section every time I change this file.
 // You can also copy it into a separate CHANGELOG.md if you prefer.
-const APP_VERSION = "0.12.0";
+const APP_VERSION = "0.13.0";
 const CHANGELOG = [
+  {
+    version: "0.13.0",
+    date: "2026-02-01",
+    changes: [
+      "Minor changes to Rules and Intro",
+    ],
+  },
   {
     version: "0.12.0",
     date: "2026-02-01",
@@ -285,7 +292,7 @@ function defaultState() {
   return {
     meta: {
       title: "Super Bowl Squares",
-      subtitle: "Game day fun for a great cause 💙",
+      subtitle: "Game day fun for a great cause",
       introHeadline: "Super Bowl Squares to Support the Westford Food Pantry",
       introBody: [
   "Hi! My name is Shriya, and I’m raising money to help the Westford Food Pantry. My goal is to raise $500.",
@@ -298,28 +305,30 @@ function defaultState() {
   "Thank you for helping me help others. Every donation makes a difference!",
 ],
     },
-    teams: { top: "Team A", left: "Team B" },
+    teams: { top: "New England Patriots", left: "Seattle Seahawks" },
     numbers: { top: range10, left: range10, randomized: false },
     rules: {
       title: "Super Bowl Fundraising - Official Rules",
       blocks: [
-        { type: "p", text: "Each $5.00 donation earns one square on the Super Bowl grid." },
-        { type: "p", text: "Squares are assigned on a first-come, first-served basis." },
+        { type: "p", text: "- Each $5.00 donation earns one square on the Super Bowl grid." },
+        { type: "p", text: "- Squares are assigned on a first-come, first-served basis." },
         { type: "h", text: "Number Assignment" },
-        { type: "p", text: "Row and column numbers (0–9) will be assigned randomly once the grid is completely filled." },
-        { type: "p", text: "If the grid is not fully populated, row and column numbers will be assigned randomly one (1) hour before kickoff." },
+        { type: "p", text: "- Row and column numbers (0–9) will be assigned randomly once the grid is completely filled." },
+        { type: "p", text: "- If the grid is not fully populated, row and column numbers will be assigned randomly one (1) hour before kickoff." },
         { type: "h", text: "How Winners Are Determined" },
-        { type: "p", text: "Winners for each quarter are determined by the last digit of each team’s score at the end of the quarter." },
-        { type: "indent", text: "Example: If the score is 21–14, the winning square is found at column “1” and row “4.”" },
-        { type: "p", text: "There will be one winner per quarter." },
-        { type: "p", text: "Each quarter winner will receive a $20 Amazon gift card." },
+        { type: "p", text: "- Winners for each quarter are determined by the last digit of each team’s score at the end of the quarter." },
+        { type: "p", text: "- The numbers on the row(left to right) represent the Pats and the numbers in the column(top to bottom) represent the Seahawks" },
+        { type: "indent", text: "Example: If the score is 21–14 at the end of Q1, Pats being 21 and Seahawks being 14." },
+        { type: "indent2", text: "The winning square for Q1 is found at row with the number “1” and at column with the nunber “4.”" },
+        { type: "p", text: "- There will be one winner per quarter." },
+        { type: "p", text: "- Each quarter winner will receive a $20 Amazon gift card." },
         { type: "h", text: "Overtime" },
-        { type: "p", text: "Overtime scores do not count." },
-        { type: "p", text: "Only the scores at the end of Q1, Q2, Q3, and Q4 are eligible." },
+        { type: "p", text: "- Overtime scores do not count." },
+        { type: "p", text: "- Only the scores at the end of Q1, Q2, Q3, and Q4 are eligible." },
         { type: "h", text: "If the Grid Is Not Fully Filled" },
-        { type: "p", text: "If the grid is not completely filled and no winner is determined for a quarter, a winner will be selected as follows:" },
-        { type: "indent", text: "At the end of the 4th quarter, a winner will be chosen randomly from the list of donors who have not already won." },
-        { type: "indent", text: "For every quarter without a winner, one different donor who has not already won will be chosen at random." },
+        { type: "p", text: "- If the grid is not completely filled and no winner is determined for a quarter, a winner will be selected as follows:" },
+        { type: "indent", text: "- At the end of the 4th quarter, a winner will be chosen randomly from the list of donors who have not already won." },
+        { type: "indent", text: "- For every quarter without a winner, one different donor who has not already won will be chosen at random." },
         { type: "indent2", text: "Example: If 2 quarters have no winner, 2 different donors will be selected randomly." }
       ],
       // Backward-compat fields (older docs may still have these)
