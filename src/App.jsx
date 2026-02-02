@@ -5,8 +5,15 @@ import React, { useEffect, useMemo, useState } from "react";
 // ============================
 // I will update this section every time I change this file.
 // You can also copy it into a separate CHANGELOG.md if you prefer.
-const APP_VERSION = "0.14.0";
+const APP_VERSION = "0.15.0";
 const CHANGELOG = [
+  {
+    version: "0.15.0",
+    date: "2026-02-01",
+    changes: [
+      "Removed one time setup reminder",
+    ],
+  },
   {
     version: "0.14.0",
     date: "2026-02-01",
@@ -1212,20 +1219,6 @@ export default function SuperBowlSquaresFundraiser() {
             ) : null}
           </>
         ) : null}
-
-        <Card>
-          <CardHeader>
-            <CardTitle>One-time setup reminder</CardTitle>
-          </CardHeader>
-          <CardContent className="text-sm text-gray-700 space-y-2">
-            <div>
-              If you can sign in but edits fail, your Firestore Rules may be blocking writes (that’s good!).
-            </div>
-            <div>
-              You must allow public reads and admin-only writes in Firestore Rules.
-            </div>
-          </CardContent>
-        </Card>
 
         <div className="text-xs text-gray-500">
           Version {APP_VERSION} • Last change: {CHANGELOG[0]?.date}
